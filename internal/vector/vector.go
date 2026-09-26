@@ -1,17 +1,27 @@
 package main
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"math"
 	"math/rand/v2"
 	"slices"
-	"time"
 )
 
 type Vector struct {
 	Id     int
 	Values []float32
+}
+
+type ScoredVector struct {
+	Vec      Vector
+	Distance float32
+}
+
+type Cluster struct {
+	Centroid []float32
+	Members  []Vector
 }
 
 // var idCounter uint64
@@ -92,12 +102,12 @@ func GenerateRandomVectors(r *rand.Rand, count int, dimensions int) []Vector {
 	return vectors
 }
 
-func BruteForceSearch(query []float32, dataset []Vector, k int) ([]Vector, error) {
+func BruteForceSearch(query []float32, dataset []Vector, k int) ([]ScoredVector, error) {
 
-	distances := []Vector{}
+	distances := []ScoredVector{}
 
 	if k > len(dataset) {
-		return []Vector{}, errors.New("K shouldn't be greater than the dataset")
+		return []ScoredVector{}, errors.New("K shouldn't be greater than the dataset")
 	}
 
 	for i := 0; i < len(dataset); i++ {
@@ -105,17 +115,17 @@ func BruteForceSearch(query []float32, dataset []Vector, k int) ([]Vector, error
 		distance, err := EuclideanDistance(query, dataset[i].Values)
 
 		if err != nil {
-			return []Vector{}, errors.New("There was a error while calcualting the distance")
+			return []ScoredVector{}, errors.New("There was a error while calcualting the distance")
 		}
 
-		distances = append(distances, Vector{
-			Id:     dataset[i].Id,
-			Values: []float32{distance},
+		distances = append(distances, ScoredVector{
+			Vec:      dataset[i],
+			Distance: distance,
 		})
 	}
 
-	slices.SortFunc(distances, func(a, b Vector) int {
-		return slices.Compare(a.Values, b.Values)
+	slices.SortFunc(distances, func(a, b ScoredVector) int {
+		return cmp.Compare(a.Distance, b.Distance)
 	})
 
 	topKDistance := distances[:k]
@@ -124,28 +134,119 @@ func BruteForceSearch(query []float32, dataset []Vector, k int) ([]Vector, error
 
 }
 
+func KMeans(r *rand.Rand, dataset []Vector, k int, maxIteration int) []Cluster {
+
+	cluster := []Cluster{}
+
+	for i := 0; i < k; i++ {
+		randIndex := r.IntN(len(dataset))
+		cluster = append(cluster, Cluster{
+			Centroid: dataset[randIndex].Values,
+		})
+	}
+
+	for iteration := 0; iteration < maxIteration; iteration++ {
+
+		for i := range cluster {
+			cluster[i].Members = nil
+		}
+
+		for i := 0; i < len(dataset); i++ {
+			smallDistance := float32(math.MaxFloat32)
+			closestClusterIndex := 0
+			for j := 0; j < len(cluster); j++ {
+
+				distance, err := EuclideanDistance(dataset[i].Values, cluster[j].Centroid)
+
+				if err != nil {
+					fmt.Println("Error calculating distance")
+					return []Cluster{}
+				}
+
+				if distance < smallDistance {
+					smallDistance = distance
+					closestClusterIndex = j
+				}
+
+			}
+			cluster[closestClusterIndex].Members = append(cluster[closestClusterIndex].Members, dataset[i])
+
+		}
+
+		for i := range cluster {
+
+			if len(cluster[i].Members) == 0 {
+				continue // keep old centroid, skip recompute
+			}
+			
+			newCentroids := RecomputeCentroid(cluster[i].Members)
+
+			cluster[i].Centroid = newCentroids
+		}
+
+	}
+
+	return cluster
+
+}
+
+func RecomputeCentroid(members []Vector) []float32 {
+	dimensions := len(members[0].Values)
+	newCentroid := make([]float32, dimensions)
+
+	for i := 0; i < dimensions; i++ {
+
+		var sum float32
+
+		for _, vector := range members {
+
+			sum += vector.Values[i]
+		}
+
+		newCentroid[i] = sum / float32(len(members))
+	}
+
+	return newCentroid
+}
+
 func main() {
 
 	source := rand.NewPCG(42, 999)
 	r := rand.New(source)
 
-	datasets := GenerateRandomVectors(r, 1000000, 128)
-	query := GenerateRandomVectors(r, 1, 128)
+	datasets := GenerateRandomVectors(r, 10, 2)
+	// query := GenerateRandomVectors(r, 1, 128)
 
-	
-	start := time.Now()
-	topK, err := BruteForceSearch(query[0].Values, datasets, 10)
-	elapsed := time.Since(start)
+	// start := time.Now()
+	// topK, err := BruteForceSearch(query[0].Values, datasets, 100)
+	// elapsed := time.Since(start)
 
-	fmt.Println("N =", 1000000, "took", elapsed) 
+	// fmt.Println("N =", 100000, "took", elapsed)
 
-	
+	// if err != nil {
+	// 	fmt.Print(err)
+	// 	return
+	// }
 
-	if err != nil {
-		fmt.Print(err)
-		return
+	// for i := 0; i < len(topK); i++ {
+	// 	fmt.Printf("The id is %d and the distance is %f\n", topK[i].Vec.Id, topK[i].Distance)
+	// }
+
+	cluster := KMeans(r, datasets, 8, 2)
+
+	for i := 0; i < len(cluster); i++ {
+		fmt.Printf("The cluster %d: %+v\n", i, cluster[i])
 	}
 
-	fmt.Println(topK)
+	// vectors := []Vector{
+	// 	{
+	// 		Id:     8,
+	// 		Values: []float32{0.08737445, -0.29944146},
+	// 	},
+	// }
+
+	// reCompute := RecomputeCentroid(vectors)
+
+	// fmt.Println(reCompute)
 
 }
