@@ -7,6 +7,8 @@ import (
 	"math"
 	"math/rand/v2"
 	"slices"
+	"sort"
+	"time"
 )
 
 type Vector struct {
@@ -102,12 +104,28 @@ func GenerateRandomVectors(r *rand.Rand, count int, dimensions int) []Vector {
 	return vectors
 }
 
+// BruteForceSearch compares the query against every vector in the dataset.
+//
+// Input:
+//   - query   → vector we want to search for
+//   - dataset → vectors to search through
+//   - k       → number of nearest vectors to return
+//
+// Output:
+//   - []ScoredVector → k closest vectors with their distances
+//   - error          → returned if k is invalid or distance calculation fails
+//
+// Process:
+//   1. Calculate distance between query and every vector.
+//   2. Sort vectors by distance (smallest first).
+//   3. Return the top k closest vectors.
+
 func BruteForceSearch(query []float32, dataset []Vector, k int) ([]ScoredVector, error) {
 
 	distances := []ScoredVector{}
 
 	if k > len(dataset) {
-		return []ScoredVector{}, errors.New("K shouldn't be greater than the dataset")
+		return []ScoredVector{}, errors.New("not enough vectors in the selected clusters to return k results")
 	}
 
 	for i := 0; i < len(dataset); i++ {
@@ -178,7 +196,7 @@ func KMeans(r *rand.Rand, dataset []Vector, k int, maxIteration int) []Cluster {
 			if len(cluster[i].Members) == 0 {
 				continue // keep old centroid, skip recompute
 			}
-			
+
 			newCentroids := RecomputeCentroid(cluster[i].Members)
 
 			cluster[i].Centroid = newCentroids
@@ -187,6 +205,90 @@ func KMeans(r *rand.Rand, dataset []Vector, k int, maxIteration int) []Cluster {
 	}
 
 	return cluster
+
+}
+
+type ClusterData struct {
+	Index    int
+	Distance float32
+}
+
+func IVFSearch(query []float32, clusters []Cluster, nprobe int, k int) ([]ScoredVector, error) {
+
+	// k used here is how many final results to return (what the user actually asked for) !!
+	// nprobe controls how many clusters to look inside (an index-time/search-time speed knob)
+
+	NCentroid := make([]ClusterData, 0, len(clusters))
+	var memberCoimbed []Vector
+
+	if nprobe > len(clusters) {
+		return []ScoredVector{}, errors.New("nprobe cannot be greater than the number of clusters")
+	}
+
+	for i := 0; i < len(clusters); i++ {
+		distance, err := EuclideanDistance(query, clusters[i].Centroid)
+
+		if err != nil {
+			return []ScoredVector{}, err
+		}
+
+		NCentroid = append(NCentroid, ClusterData{
+			Index:    i,
+			Distance: distance,
+		})
+
+	}
+
+	sort.Slice(NCentroid, func(a, b int) bool {
+		return NCentroid[a].Distance < NCentroid[b].Distance
+	})
+
+	NCentroid = NCentroid[:nprobe]
+
+	for i := 0; i < len(NCentroid); i++ {
+
+		clusterIndex := NCentroid[i].Index
+
+		memberCoimbed = append(memberCoimbed, clusters[clusterIndex].Members...)
+	}
+
+	results, err := BruteForceSearch(query, memberCoimbed, k)
+
+	if err != nil {
+		return []ScoredVector{}, err
+	}
+
+	return results, nil
+
+}
+
+func RecallAtK(groundTruth []ScoredVector, approx []ScoredVector) float32 {
+
+	idMap := make(map[int]bool)
+	count := 0
+
+	if len(groundTruth) == 0 {
+		return 0.0
+	}
+
+	for i := 0; i < len(groundTruth); i++ {
+
+		id := groundTruth[i].Vec.Id
+
+		idMap[id] = true
+
+	}
+
+	for i := 0; i < len(approx); i++ {
+
+		id := approx[i].Vec.Id
+
+		if idMap[id] {
+			count++
+		}
+	}
+
+	return float32(count) / float32(len(groundTruth))
 
 }
 
@@ -214,39 +316,144 @@ func main() {
 	source := rand.NewPCG(42, 999)
 	r := rand.New(source)
 
-	datasets := GenerateRandomVectors(r, 10, 2)
-	// query := GenerateRandomVectors(r, 1, 128)
+	// Configuration
+	datasetSize := 1000
+	dimensions := 128
+	numClusters := 20
+	k := 10
+	numQueries := 20
 
-	// start := time.Now()
-	// topK, err := BruteForceSearch(query[0].Values, datasets, 100)
-	// elapsed := time.Since(start)
+	// Generate dataset
+	datasets := GenerateRandomVectors(
+		r,
+		datasetSize,
+		dimensions,
+	)
 
-	// fmt.Println("N =", 100000, "took", elapsed)
+	// Generate queries
+	queries := GenerateRandomVectors(
+		r,
+		numQueries,
+		dimensions,
+	)
 
-	// if err != nil {
-	// 	fmt.Print(err)
-	// 	return
-	// }
+	// Build IVF index
+	fmt.Println("Building IVF index...")
 
-	// for i := 0; i < len(topK); i++ {
-	// 	fmt.Printf("The id is %d and the distance is %f\n", topK[i].Vec.Id, topK[i].Distance)
-	// }
+	clusters := KMeans(
+		r,
+		datasets,
+		numClusters,
+		3,
+	)
 
-	cluster := KMeans(r, datasets, 8, 2)
+	fmt.Println("IVF index built.")
 
-	for i := 0; i < len(cluster); i++ {
-		fmt.Printf("The cluster %d: %+v\n", i, cluster[i])
+	// =========================================
+	// BRUTE FORCE BENCHMARK
+	// =========================================
+
+	var bruteForceTotalTime time.Duration
+
+	// Store ground truth for each query
+	groundTruths := make([][]ScoredVector, len(queries))
+
+	for i, query := range queries {
+
+		start := time.Now()
+
+		groundTruth, err := BruteForceSearch(
+			query.Values,
+			datasets,
+			k,
+		)
+
+		elapsed := time.Since(start)
+
+		if err != nil {
+			fmt.Println("Error during brute force search:", err)
+			return
+		}
+
+		bruteForceTotalTime += elapsed
+		groundTruths[i] = groundTruth
 	}
 
-	// vectors := []Vector{
-	// 	{
-	// 		Id:     8,
-	// 		Values: []float32{0.08737445, -0.29944146},
-	// 	},
-	// }
+	bruteForceAverageTime :=
+		bruteForceTotalTime / time.Duration(numQueries)
 
-	// reCompute := RecomputeCentroid(vectors)
+	// =========================================
+	// PRINT RESULTS
+	// =========================================
 
-	// fmt.Println(reCompute)
+	fmt.Println()
+	fmt.Println("==============================================")
+	fmt.Println("              VECTOR SEARCH BENCHMARK")
+	fmt.Println("==============================================")
 
+	fmt.Printf(
+		"Brute Force | Recall@%d = 1.00 (100%%) | Avg Time = %v\n",
+		k,
+		bruteForceAverageTime,
+	)
+
+	fmt.Println("----------------------------------------------")
+
+	// =========================================
+	// IVF BENCHMARK
+	// =========================================
+
+	nprobes := []int{1, 2, 5, 10, 20}
+
+	for _, nprobe := range nprobes {
+
+		var totalRecall float32
+		var totalIVFTime time.Duration
+
+		for i, query := range queries {
+
+			start := time.Now()
+
+			approx, err := IVFSearch(
+				query.Values,
+				clusters,
+				nprobe,
+				k,
+			)
+
+			elapsed := time.Since(start)
+
+			if err != nil {
+				fmt.Println("Error during IVF search:", err)
+				return
+			}
+
+			totalIVFTime += elapsed
+
+			// Compare IVF result with brute-force ground truth
+			recall := RecallAtK(
+				groundTruths[i],
+				approx,
+			)
+
+			totalRecall += recall
+		}
+
+		averageRecall :=
+			totalRecall / float32(numQueries)
+
+		averageIVFTime :=
+			totalIVFTime / time.Duration(numQueries)
+
+		fmt.Printf(
+			"IVF nprobe=%-2d | Recall@%d = %.2f (%3.0f%%) | Avg Time = %v\n",
+			nprobe,
+			k,
+			averageRecall,
+			averageRecall*100,
+			averageIVFTime,
+		)
+	}
+
+	fmt.Println("==============================================")
 }
