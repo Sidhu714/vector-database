@@ -12,7 +12,7 @@ import (
 
 type Cluster struct {
 	Centroid []float32
-	Members  []Vector
+	Members  []vector.Vector
 }
 
 
@@ -22,7 +22,7 @@ type ClusterData struct {
 }
 
 
-func KMeans(r *rand.Rand, dataset []Vector, k int, maxIteration int) []Cluster {
+func KMeans(r *rand.Rand, dataset []vector.Vector, k int, maxIteration int) []Cluster {
 
 	cluster := []Cluster{}
 
@@ -80,23 +80,23 @@ func KMeans(r *rand.Rand, dataset []Vector, k int, maxIteration int) []Cluster {
 
 
 
-func IVFSearch(query []float32, clusters []Cluster, nprobe int, k int) ([]ScoredVector, error) {
+func IVFSearch(query []float32, clusters []Cluster, nprobe int, k int) ([]vector.ScoredVector, error) {
 
 	// k used here is how many final results to return (what the user actually asked for) !!
 	// nprobe controls how many clusters to look inside (an index-time/search-time speed knob)
 
 	NCentroid := make([]ClusterData, 0, len(clusters))
-	var memberCoimbed []Vector
+	var memberCoimbed []vector.Vector
 
 	if nprobe > len(clusters) {
-		return []ScoredVector{}, errors.New("nprobe cannot be greater than the number of clusters")
+		return []vector.ScoredVector{}, errors.New("nprobe cannot be greater than the number of clusters")
 	}
 
 	for i := 0; i < len(clusters); i++ {
 		distance, err := vector.EuclideanDistance(query, clusters[i].Centroid)
 
 		if err != nil {
-			return []ScoredVector{}, err
+			return []vector.ScoredVector{}, err
 		}
 
 		NCentroid = append(NCentroid, ClusterData{
@@ -122,14 +122,14 @@ func IVFSearch(query []float32, clusters []Cluster, nprobe int, k int) ([]Scored
 	results, err := BruteForceSearch(query, memberCoimbed, k)
 
 	if err != nil {
-		return []ScoredVector{}, err
+		return []vector.ScoredVector{}, err
 	}
 
 	return results, nil
 
 }
 
-func RecomputeCentroid(members []Vector) []float32 {
+func RecomputeCentroid(members []vector.Vector) []float32 {
 	dimensions := len(members[0].Values)
 	newCentroid := make([]float32, dimensions)
 

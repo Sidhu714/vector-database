@@ -8,15 +8,6 @@ import (
 	"vector/internal/vector"
 )
 
-type Vector struct {
-	Id     int
-	Values []float32
-}
-
-type ScoredVector struct {
-	Vec      Vector
-	Distance float32
-}
 
 
 // BruteForceSearch compares the query against every vector in the dataset.
@@ -35,12 +26,12 @@ type ScoredVector struct {
 //   2. Sort vectors by distance (smallest first).
 //   3. Return the top k closest vectors.
 
-func BruteForceSearch(query []float32, dataset []Vector, k int) ([]ScoredVector, error) {
+func BruteForceSearch(query []float32, dataset []vector.Vector, k int) ([]vector.ScoredVector, error) {
 
-	distances := []ScoredVector{}
+	distanceVector := []vector.ScoredVector{}
 
 	if k > len(dataset) {
-		return []ScoredVector{}, errors.New("not enough vectors in the selected clusters to return k results")
+		return []vector.ScoredVector{}, errors.New("not enough vectors in the selected clusters to return k results")
 	}
 
 	for i := 0; i < len(dataset); i++ {
@@ -48,20 +39,20 @@ func BruteForceSearch(query []float32, dataset []Vector, k int) ([]ScoredVector,
 		distance, err := vector.EuclideanDistance(query, dataset[i].Values)
 
 		if err != nil {
-			return []ScoredVector{}, errors.New("There was a error while calcualting the distance")
+			return []vector.ScoredVector{}, errors.New("There was a error while calcualting the distance")
 		}
 
-		distances = append(distances, ScoredVector{
+		distanceVector = append(distanceVector, vector.ScoredVector{
 			Vec:      dataset[i],
 			Distance: distance,
 		})
 	}
 
-	slices.SortFunc(distances, func(a, b ScoredVector) int {
+	slices.SortFunc(distanceVector, func(a, b vector.ScoredVector) int {
 		return cmp.Compare(a.Distance, b.Distance)
 	})
 
-	topKDistance := distances[:k]
+	topKDistance := distanceVector[:k]
 
 	return topKDistance, nil
 

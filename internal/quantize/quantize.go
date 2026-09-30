@@ -28,14 +28,25 @@ func Quantize(vector []float32) QuantizedVector {
     }
 
     minValue := vector[0]
+    maxValue := vector[0]
 
     for _, value := range vector[1:] {
         if value < minValue {
             minValue = value
+        }else if value > maxValue {
+            maxValue = value
         }
     }
 
-    maxValue := float32(1.0)
+    if minValue == maxValue {
+        return QuantizedVector{
+            Values: make([]uint8, length),
+            MinValue: minValue,
+            Scale: 1,
+        }
+    }
+
+    
     scale := float32(255.0) / (maxValue - minValue)
 
     quantizedList := make([]uint8, length)
